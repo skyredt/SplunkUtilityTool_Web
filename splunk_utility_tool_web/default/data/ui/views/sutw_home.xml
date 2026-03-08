@@ -1,10 +1,336 @@
-<dashboard version="1.1">
+<dashboard version="1.1" script="js/sutw_app.js" stylesheet="css/sutw_app.css">
   <label>Splunk Utility Tool Web</label>
-  <description>Scaffold placeholder dashboard.</description>
+  <description>Static workflow shell for the Splunk Utility Tool Web app.</description>
   <row>
     <panel>
       <html>
-        <p>Initial scaffold only. No business logic or UI implementation is present yet.</p>
+        <div class="sutw-shell" id="sutw-shell">
+          <div class="sutw-shell__header">
+            <div class="sutw-shell__eyebrow">Splunk Utility Tool Web</div>
+            <h2 class="sutw-shell__title">Clone Workflow Shell</h2>
+            <p class="sutw-shell__status" id="sutw-shell-status">Loading workflow shell...</p>
+          </div>
+
+          <div class="sutw-shell__grid">
+            <section class="sutw-card">
+              <div class="sutw-card__header">
+                <span class="sutw-step-badge">Step 1</span>
+                <h3>Report Selection</h3>
+              </div>
+              <p class="sutw-card__intro">Eligible reports load from the backend when the page opens. Selection still remains browser-only and resets on refresh.</p>
+              <div class="sutw-inline-metric">
+                <span class="sutw-inline-metric__label">Selected Reports</span>
+                <span class="sutw-inline-metric__value" id="sutw-selected-count">0</span>
+              </div>
+              <div class="sutw-callout sutw-callout--muted" id="sutw-report-feedback">Loading eligible reports...</div>
+              <ul class="sutw-report-list" id="sutw-report-list"></ul>
+            </section>
+
+            <section class="sutw-card">
+              <div class="sutw-card__header">
+                <span class="sutw-step-badge">Step 2</span>
+                <h3>Time Range</h3>
+              </div>
+              <p class="sutw-card__intro">Choose a mock time preset to preview how the future workflow will read the active range.</p>
+              <div class="sutw-range-list" id="sutw-range-list">
+                <button class="sutw-range-option is-active" type="button" data-range-label="Last 24 hours" data-earliest="-24h@h" data-latest="now">Last 24 hours</button>
+                <button class="sutw-range-option" type="button" data-range-label="Last 7 days" data-earliest="-7d@d" data-latest="now">Last 7 days</button>
+                <button class="sutw-range-option" type="button" data-range-label="This month" data-earliest="@mon" data-latest="now">This month</button>
+              </div>
+              <div class="sutw-field-grid">
+                <div class="sutw-field">
+                  <span class="sutw-field__label">Range</span>
+                  <span class="sutw-field__value" id="sutw-range-label">Last 24 hours</span>
+                </div>
+                <div class="sutw-field">
+                  <span class="sutw-field__label">Earliest</span>
+                  <span class="sutw-field__value" id="sutw-range-earliest">-24h@h</span>
+                </div>
+                <div class="sutw-field">
+                  <span class="sutw-field__label">Latest</span>
+                  <span class="sutw-field__value" id="sutw-range-latest">now</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="sutw-card">
+              <div class="sutw-card__header">
+                <span class="sutw-step-badge">Step 3</span>
+                <h3>Review &amp; Confirmation</h3>
+              </div>
+              <p class="sutw-card__intro">Selection stays browser-only until submission. The backend validates and tracks only the accepted batch record, and execution remains disabled in this phase.</p>
+              <div class="sutw-summary">
+                <div class="sutw-summary__item">
+                  <span class="sutw-summary__label">Reports Selected</span>
+                  <span class="sutw-summary__value" id="sutw-confirmation-count">0</span>
+                </div>
+                <div class="sutw-summary__item">
+                  <span class="sutw-summary__label">Mock Time Range</span>
+                  <span class="sutw-summary__value" id="sutw-confirmation-range">Last 24 hours</span>
+                </div>
+                <div class="sutw-summary__item">
+                  <span class="sutw-summary__label">Readiness</span>
+                  <span class="sutw-summary__value" id="sutw-confirmation-status">Select at least one report</span>
+                </div>
+              </div>
+              <div class="sutw-callout" id="sutw-confirmation-reports">No reports selected.</div>
+              <label class="sutw-acknowledgement" for="sutw-review-ack">
+                <input class="sutw-acknowledgement__checkbox" id="sutw-review-ack" type="checkbox" />
+                <span class="sutw-acknowledgement__text">I reviewed the current selection and understand the start action now creates a tracked non-destructive batch record only. No clone or destructive execution will run in this phase.</span>
+              </label>
+              <div class="sutw-action-row">
+                <button class="sutw-button sutw-button--primary" id="sutw-start-button" type="button" disabled>Submit Start Batch</button>
+                <div class="sutw-action-row__note" id="sutw-action-note">Select at least one report and acknowledge review to enable the tracked non-destructive start-batch submission.</div>
+              </div>
+            </section>
+
+            <section class="sutw-card">
+              <div class="sutw-card__header">
+                <span class="sutw-step-badge">Step 4</span>
+                <h3>Progress</h3>
+              </div>
+              <p class="sutw-card__intro">Before submission, a read-only preview drives this section. After submission, it polls tracked backend batch status until the safe lifecycle reaches stub completion.</p>
+              <div class="sutw-progress">
+                <div class="sutw-progress__bar">
+                  <div class="sutw-progress__fill" id="sutw-progress-fill"></div>
+                </div>
+                <div class="sutw-progress__text" id="sutw-progress-text">Loading submission preview...</div>
+                <div class="sutw-progress__text" id="sutw-progress-state">Current state: Draft preview</div>
+              </div>
+              <div class="sutw-callout sutw-callout--muted" id="sutw-progress-note">Loading the read-only submission preview...</div>
+            </section>
+
+            <section class="sutw-card sutw-card--wide">
+              <div class="sutw-card__header">
+                <span class="sutw-step-badge">Step 5</span>
+                <h3>Batch Details</h3>
+              </div>
+              <p class="sutw-card__intro">This dedicated panel groups recent tracked batches, the active batch overview, execution-readiness metadata, phase capabilities, lifecycle policy, action intents, execution-plan preview, execution-request preview, timeline, and per-report history into one place. Current tracked batches remain temporary process-memory records in this phase.</p>
+              <div class="sutw-callout sutw-callout--muted">
+                <strong>Recent Batches</strong>
+                <div class="sutw-action-row">
+                  <button class="sutw-button" id="sutw-recent-batch-refresh" type="button">Refresh Recent Batches</button>
+                  <div class="sutw-action-row__note" id="sutw-recent-batch-note">Recent tracked batches are temporary process-memory records in this phase and may disappear after a Splunk restart or Python process recycle.</div>
+                </div>
+                <ul class="sutw-report-list" id="sutw-recent-batch-list">
+                  <li>No tracked batches yet.</li>
+                </ul>
+              </div>
+              <div class="sutw-callout sutw-callout--muted" id="sutw-batch-detail-empty">No tracked batch yet. Submit a validated request to create the first server-generated batch ID.</div>
+              <div id="sutw-batch-detail-content" hidden="hidden">
+                <div class="sutw-callout">
+                  <strong>Batch Overview</strong>
+                  <div class="sutw-summary">
+                    <div class="sutw-summary__item">
+                      <span class="sutw-summary__label">Batch ID</span>
+                      <span class="sutw-summary__value" id="sutw-summary-batch-id">No tracked batch yet</span>
+                    </div>
+                    <div class="sutw-summary__item">
+                      <span class="sutw-summary__label">Status</span>
+                      <span class="sutw-summary__value" id="sutw-summary-status">Waiting for first submission</span>
+                    </div>
+                    <div class="sutw-summary__item">
+                      <span class="sutw-summary__label">Selected Reports</span>
+                      <span class="sutw-summary__value" id="sutw-summary-report-count">0 reports</span>
+                    </div>
+                    <div class="sutw-summary__item">
+                      <span class="sutw-summary__label">Last Update</span>
+                      <span class="sutw-summary__value" id="sutw-summary-updated-at">No tracked status yet</span>
+                    </div>
+                  </div>
+                  <div class="sutw-callout sutw-callout--muted" id="sutw-summary-note">No tracked batch yet. Submit a validated request to create the first server-generated batch ID.</div>
+                  <div class="sutw-callout sutw-callout--muted">
+                    <strong>Execution Readiness</strong>
+                    <div class="sutw-summary">
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Tracking Mode</span>
+                        <span class="sutw-summary__value" id="sutw-execution-tracking-mode">Tracked batch</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Storage Mode</span>
+                        <span class="sutw-summary__value" id="sutw-execution-storage-mode">Process memory</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Execution Mode</span>
+                        <span class="sutw-summary__value" id="sutw-execution-mode">Stub non-destructive</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Execution Enabled</span>
+                        <span class="sutw-summary__value" id="sutw-execution-enabled">No</span>
+                      </div>
+                    </div>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-execution-note">Tracked status is available for operator review, but real execution remains disabled. Batch data stays in temporary process memory only in this phase.</div>
+                  </div>
+                  <div class="sutw-callout sutw-callout--muted">
+                    <strong>Phase Capabilities</strong>
+                    <div class="sutw-summary">
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Execution Phase</span>
+                        <span class="sutw-summary__value" id="sutw-capability-phase">Tracked only</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Tracked Only</span>
+                        <span class="sutw-summary__value" id="sutw-capability-tracked-only">Yes</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Next Allowed Transition</span>
+                        <span class="sutw-summary__value" id="sutw-capability-next-transition">Status refresh</span>
+                      </div>
+                    </div>
+                    <ul id="sutw-capability-list">
+                      <li>View Tracked Status | Enabled</li>
+                      <li>Reopen Recent Batch | Enabled</li>
+                      <li>Start Execution | Disabled</li>
+                    </ul>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-capability-note">This batch supports tracked review only. Real execution transitions remain disabled in this phase.</div>
+                  </div>
+                  <div class="sutw-callout sutw-callout--muted">
+                    <strong>Lifecycle Policy</strong>
+                    <div class="sutw-summary">
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Next Backend Phase</span>
+                        <span class="sutw-summary__value" id="sutw-policy-next-phase">Tracked status progression</span>
+                      </div>
+                    </div>
+                    <div class="sutw-field-grid">
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Allowed Actions</span>
+                        <ul id="sutw-policy-allowed-actions">
+                          <li>View Batch Details</li>
+                          <li>Refresh Status</li>
+                          <li>Reopen Recent Batch</li>
+                        </ul>
+                      </div>
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Disallowed Actions</span>
+                        <ul id="sutw-policy-disallowed-actions">
+                          <li>Start Execution</li>
+                          <li>Dispatch Clone</li>
+                          <li>Run Verification</li>
+                          <li>Perform Cleanup</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-policy-note">This batch may continue through tracked status refresh only. Execution-backed transitions remain disabled until a later phase.</div>
+                  </div>
+                  <div class="sutw-callout sutw-callout--muted">
+                    <strong>Action Intents</strong>
+                    <div class="sutw-field-grid">
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Enabled Action Intents</span>
+                        <ul id="sutw-intent-enabled-actions">
+                          <li>View Batch Details | Review</li>
+                          <li>Refresh Status | Observe</li>
+                          <li>Reopen Recent Batch | Review</li>
+                        </ul>
+                      </div>
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Disabled Action Intents</span>
+                        <ul id="sutw-intent-disabled-actions">
+                          <li>Start Execution | Execute</li>
+                          <li>Dispatch Clone | Clone</li>
+                          <li>Run Verification | Verify</li>
+                          <li>Perform Cleanup | Cleanup</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-intent-enabled-note">Read-only review and navigation actions are allowed while the tracked batch continues through safe lifecycle polling.</div>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-intent-disabled-note">Execution-backed actions remain server-side gated until a later execution-enabled phase.</div>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-intent-note">Action intents are descriptive only. Server-side gating keeps execution disabled in this phase.</div>
+                  </div>
+                  <div class="sutw-callout sutw-callout--muted">
+                    <strong>Execution Plan Preview</strong>
+                    <div class="sutw-summary">
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Plan State</span>
+                        <span class="sutw-summary__value" id="sutw-plan-state">Preview only</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Preview Only</span>
+                        <span class="sutw-summary__value" id="sutw-plan-preview-only">Yes</span>
+                      </div>
+                    </div>
+                    <div class="sutw-field-grid">
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Planned Reports</span>
+                        <ul id="sutw-plan-reports">
+                          <li>No planned reports yet.</li>
+                        </ul>
+                      </div>
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Planned Steps</span>
+                        <ul id="sutw-plan-steps">
+                          <li>Clone Preparation | Preview only</li>
+                          <li>Dispatch Handoff | Preview only</li>
+                          <li>Verification Handoff | Preview only</li>
+                          <li>Cleanup Handoff | Preview only</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-plan-note">This execution plan is a high-level preview only. No clone, dispatch, verification, or cleanup action runs in this phase.</div>
+                  </div>
+                  <div class="sutw-callout sutw-callout--muted">
+                    <strong>Execution Request Preview</strong>
+                    <div class="sutw-summary">
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Request Shape</span>
+                        <span class="sutw-summary__value" id="sutw-request-shape">Future execution submission</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Preview Only</span>
+                        <span class="sutw-summary__value" id="sutw-request-preview-only">Yes</span>
+                      </div>
+                      <div class="sutw-summary__item">
+                        <span class="sutw-summary__label">Acknowledged</span>
+                        <span class="sutw-summary__value" id="sutw-request-acknowledged">Yes</span>
+                      </div>
+                    </div>
+                    <div class="sutw-field-grid">
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Batch ID</span>
+                        <div id="sutw-request-batch-id">No tracked batch yet</div>
+                      </div>
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Time Range</span>
+                        <div id="sutw-request-time-range">Last 24 hours | -24h@h to now</div>
+                      </div>
+                    </div>
+                    <div class="sutw-field-grid">
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Report IDs</span>
+                        <ul id="sutw-request-report-ids">
+                          <li>No report IDs listed.</li>
+                        </ul>
+                      </div>
+                      <div class="sutw-field">
+                        <span class="sutw-field__label">Execution Phases</span>
+                        <ul id="sutw-request-phases">
+                          <li>Clone Preparation</li>
+                          <li>Dispatch Handoff</li>
+                          <li>Verification Handoff</li>
+                          <li>Cleanup Handoff</li>
+                        </ul>
+                      </div>
+                    </div>
+                    <div class="sutw-callout sutw-callout--muted" id="sutw-request-note">This execution request preview is backend-generated for preflight review only. No clone, dispatch, verification, or cleanup action runs in this phase.</div>
+                  </div>
+                </div>
+                <div class="sutw-callout sutw-callout--muted">
+                  <strong>Batch Lifecycle Timeline</strong>
+                  <ul id="sutw-event-timeline">
+                    <li>No tracked lifecycle events yet.</li>
+                  </ul>
+                </div>
+                <div class="sutw-callout sutw-callout--muted">
+                  <strong>Per-Report Status &amp; History</strong>
+                  <ul id="sutw-report-status-list">
+                    <li>No tracked report statuses yet.</li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
       </html>
     </panel>
   </row>
