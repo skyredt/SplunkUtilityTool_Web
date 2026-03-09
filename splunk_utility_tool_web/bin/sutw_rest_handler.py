@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from collections.abc import Mapping
 from typing import Any
 
 from splunk.persistconn.application import PersistentServerConnectionApplication
+
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _CURRENT_DIR not in sys.path:
+    sys.path.insert(0, _CURRENT_DIR)
 
 from sutw_report_inventory import ReportInventoryError, list_eligible_reports
 from sutw_service import ServiceError, get_batch_status, list_recent_batches, preview_start_batch, submit_start_batch
@@ -28,6 +34,9 @@ from sutw_validation import (
 
 class SutwRestHandler(PersistentServerConnectionApplication):
     """Handle eligible report list, preview, tracked submission, and batch status requests."""
+
+    def __init__(self, command_line: list[str] | None = None, command_arg: Any = None) -> None:
+        super().__init__()
 
     def handle(self, in_string: str) -> dict[str, Any]:
         try:

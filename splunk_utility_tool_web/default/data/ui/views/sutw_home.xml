@@ -1,4 +1,4 @@
-<dashboard version="1.1" script="js/sutw_app.js" stylesheet="css/sutw_app.css">
+<dashboard version="1.1" script="js/sutw_app_v2.js" stylesheet="css/sutw_app_v2.css">
   <label>Splunk Utility Tool Web</label>
   <description>Static workflow shell for the Splunk Utility Tool Web app.</description>
   <row>
@@ -17,13 +17,22 @@
                 <span class="sutw-step-badge">Step 1</span>
                 <h3>Report Selection</h3>
               </div>
-              <p class="sutw-card__intro">Eligible reports load from the backend when the page opens. Selection still remains browser-only and resets on refresh.</p>
+              <p class="sutw-card__intro">Eligible reports load from the backend when the page opens. Use the filter to narrow long lists, and selections stay browser-only until submission.</p>
               <div class="sutw-inline-metric">
                 <span class="sutw-inline-metric__label">Selected Reports</span>
                 <span class="sutw-inline-metric__value" id="sutw-selected-count">0</span>
               </div>
+              <div class="sutw-toolbar">
+                <label class="sutw-input-field sutw-input-field--grow" for="sutw-report-search">
+                  <span class="sutw-field__label">Filter Reports</span>
+                  <input class="sutw-text-input" id="sutw-report-search" type="search" placeholder="Search by title, app, owner, or description" />
+                </label>
+                <button class="sutw-button sutw-button--secondary" id="sutw-report-clear-search" type="button" disabled="disabled">Clear Filter</button>
+                <button class="sutw-button sutw-button--secondary" id="sutw-report-clear-selection" type="button" disabled="disabled">Clear Selection</button>
+              </div>
+              <div class="sutw-action-row__note" id="sutw-report-filter-summary">Showing 0 eligible reports.</div>
               <div class="sutw-callout sutw-callout--muted" id="sutw-report-feedback">Loading eligible reports...</div>
-              <ul class="sutw-report-list" id="sutw-report-list"></ul>
+              <ul class="sutw-report-list sutw-scroll-list" id="sutw-report-list"></ul>
             </section>
 
             <section class="sutw-card">
@@ -31,11 +40,29 @@
                 <span class="sutw-step-badge">Step 2</span>
                 <h3>Time Range</h3>
               </div>
-              <p class="sutw-card__intro">Choose a mock time preset to preview how the future workflow will read the active range.</p>
+              <p class="sutw-card__intro">Choose a preset or enter manual earliest/latest tokens to preview the submitted time range safely.</p>
               <div class="sutw-range-list" id="sutw-range-list">
+                <button class="sutw-range-option" type="button" data-range-label="Last 15 minutes" data-earliest="-15m@m" data-latest="now">Last 15 minutes</button>
+                <button class="sutw-range-option" type="button" data-range-label="Last 4 hours" data-earliest="-4h@h" data-latest="now">Last 4 hours</button>
                 <button class="sutw-range-option is-active" type="button" data-range-label="Last 24 hours" data-earliest="-24h@h" data-latest="now">Last 24 hours</button>
                 <button class="sutw-range-option" type="button" data-range-label="Last 7 days" data-earliest="-7d@d" data-latest="now">Last 7 days</button>
+                <button class="sutw-range-option" type="button" data-range-label="Last 30 days" data-earliest="-30d@d" data-latest="now">Last 30 days</button>
                 <button class="sutw-range-option" type="button" data-range-label="This month" data-earliest="@mon" data-latest="now">This month</button>
+              </div>
+              <div class="sutw-callout sutw-callout--muted">
+                <strong>Manual Range</strong>
+                <div class="sutw-toolbar sutw-toolbar--compact">
+                  <label class="sutw-input-field" for="sutw-custom-range-earliest">
+                    <span class="sutw-field__label">Earliest</span>
+                    <input class="sutw-text-input" id="sutw-custom-range-earliest" type="text" placeholder="-2d@d" />
+                  </label>
+                  <label class="sutw-input-field" for="sutw-custom-range-latest">
+                    <span class="sutw-field__label">Latest</span>
+                    <input class="sutw-text-input" id="sutw-custom-range-latest" type="text" placeholder="now" />
+                  </label>
+                  <button class="sutw-button sutw-button--secondary" id="sutw-custom-range-apply" type="button">Use Custom Range</button>
+                </div>
+                <div class="sutw-action-row__note" id="sutw-custom-range-feedback">Use Splunk time tokens such as -2d@d, now, or 2026-03-09T00:00:00.</div>
               </div>
               <div class="sutw-field-grid">
                 <div class="sutw-field">
@@ -79,7 +106,7 @@
                 <span class="sutw-acknowledgement__text">I reviewed the current selection and understand the start action now creates a tracked non-destructive batch record only. No clone or destructive execution will run in this phase.</span>
               </label>
               <div class="sutw-action-row">
-                <button class="sutw-button sutw-button--primary" id="sutw-start-button" type="button" disabled>Submit Start Batch</button>
+                <button class="sutw-button sutw-button--primary" id="sutw-start-button" type="button" disabled="disabled">Submit Start Batch</button>
                 <div class="sutw-action-row__note" id="sutw-action-note">Select at least one report and acknowledge review to enable the tracked non-destructive start-batch submission.</div>
               </div>
             </section>
@@ -105,14 +132,14 @@
                 <span class="sutw-step-badge">Step 5</span>
                 <h3>Batch Details</h3>
               </div>
-              <p class="sutw-card__intro">This dedicated panel groups recent tracked batches, the active batch overview, execution-readiness metadata, phase capabilities, lifecycle policy, action intents, execution-plan preview, execution-request preview, timeline, and per-report history into one place. Current tracked batches remain temporary process-memory records in this phase.</p>
+              <p class="sutw-card__intro">This panel shows recent tracked batches, the active batch summary, live lifecycle progress, and per-report status. Advanced read-only backend metadata appears only when it adds useful context.</p>
               <div class="sutw-callout sutw-callout--muted">
                 <strong>Recent Batches</strong>
                 <div class="sutw-action-row">
                   <button class="sutw-button" id="sutw-recent-batch-refresh" type="button">Refresh Recent Batches</button>
                   <div class="sutw-action-row__note" id="sutw-recent-batch-note">Recent tracked batches are temporary process-memory records in this phase and may disappear after a Splunk restart or Python process recycle.</div>
                 </div>
-                <ul class="sutw-report-list" id="sutw-recent-batch-list">
+                <ul class="sutw-report-list sutw-scroll-list" id="sutw-recent-batch-list">
                   <li>No tracked batches yet.</li>
                 </ul>
               </div>
@@ -139,7 +166,7 @@
                     </div>
                   </div>
                   <div class="sutw-callout sutw-callout--muted" id="sutw-summary-note">No tracked batch yet. Submit a validated request to create the first server-generated batch ID.</div>
-                  <div class="sutw-callout sutw-callout--muted">
+                  <div class="sutw-callout sutw-callout--muted" id="sutw-section-execution-readiness">
                     <strong>Execution Readiness</strong>
                     <div class="sutw-summary">
                       <div class="sutw-summary__item">
@@ -161,7 +188,7 @@
                     </div>
                     <div class="sutw-callout sutw-callout--muted" id="sutw-execution-note">Tracked status is available for operator review, but real execution remains disabled. Batch data stays in temporary process memory only in this phase.</div>
                   </div>
-                  <div class="sutw-callout sutw-callout--muted">
+                  <div class="sutw-callout sutw-callout--muted" id="sutw-section-phase-capabilities">
                     <strong>Phase Capabilities</strong>
                     <div class="sutw-summary">
                       <div class="sutw-summary__item">
@@ -184,7 +211,7 @@
                     </ul>
                     <div class="sutw-callout sutw-callout--muted" id="sutw-capability-note">This batch supports tracked review only. Real execution transitions remain disabled in this phase.</div>
                   </div>
-                  <div class="sutw-callout sutw-callout--muted">
+                  <div class="sutw-callout sutw-callout--muted" id="sutw-section-transition-policy">
                     <strong>Lifecycle Policy</strong>
                     <div class="sutw-summary">
                       <div class="sutw-summary__item">
@@ -213,7 +240,7 @@
                     </div>
                     <div class="sutw-callout sutw-callout--muted" id="sutw-policy-note">This batch may continue through tracked status refresh only. Execution-backed transitions remain disabled until a later phase.</div>
                   </div>
-                  <div class="sutw-callout sutw-callout--muted">
+                  <div class="sutw-callout sutw-callout--muted" id="sutw-section-action-intents">
                     <strong>Action Intents</strong>
                     <div class="sutw-field-grid">
                       <div class="sutw-field">
@@ -238,7 +265,7 @@
                     <div class="sutw-callout sutw-callout--muted" id="sutw-intent-disabled-note">Execution-backed actions remain server-side gated until a later execution-enabled phase.</div>
                     <div class="sutw-callout sutw-callout--muted" id="sutw-intent-note">Action intents are descriptive only. Server-side gating keeps execution disabled in this phase.</div>
                   </div>
-                  <div class="sutw-callout sutw-callout--muted">
+                  <div class="sutw-callout sutw-callout--muted" id="sutw-section-execution-plan">
                     <strong>Execution Plan Preview</strong>
                     <div class="sutw-summary">
                       <div class="sutw-summary__item">
@@ -269,7 +296,7 @@
                     </div>
                     <div class="sutw-callout sutw-callout--muted" id="sutw-plan-note">This execution plan is a high-level preview only. No clone, dispatch, verification, or cleanup action runs in this phase.</div>
                   </div>
-                  <div class="sutw-callout sutw-callout--muted">
+                  <div class="sutw-callout sutw-callout--muted" id="sutw-section-execution-request">
                     <strong>Execution Request Preview</strong>
                     <div class="sutw-summary">
                       <div class="sutw-summary__item">
@@ -317,13 +344,13 @@
                 </div>
                 <div class="sutw-callout sutw-callout--muted">
                   <strong>Batch Lifecycle Timeline</strong>
-                  <ul id="sutw-event-timeline">
+                  <ul class="sutw-scroll-list" id="sutw-event-timeline">
                     <li>No tracked lifecycle events yet.</li>
                   </ul>
                 </div>
                 <div class="sutw-callout sutw-callout--muted">
                   <strong>Per-Report Status &amp; History</strong>
-                  <ul id="sutw-report-status-list">
+                  <ul class="sutw-scroll-list" id="sutw-report-status-list">
                     <li>No tracked report statuses yet.</li>
                   </ul>
                 </div>
@@ -335,3 +362,4 @@
     </panel>
   </row>
 </dashboard>
+

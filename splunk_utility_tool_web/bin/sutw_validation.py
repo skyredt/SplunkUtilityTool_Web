@@ -21,6 +21,7 @@ BATCH_STATUS_PATH = "/sutw/v1/batches/status"
 _ALLOWED_TIME_LABEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 @._:/+-]{0,63}$")
 _ALLOWED_TIME_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9@._:+-]{1,64}$")
 _ALLOWED_BATCH_ID_PATTERN = re.compile(r"^sutw_batch_[a-f0-9]{32}$")
+_ALLOWED_CACHE_BUSTER_PATTERN = re.compile(r"^[0-9]{1,20}$")
 _MAX_REPORT_IDS = 100
 
 
@@ -43,8 +44,8 @@ def validate_list_reports_request(request: Mapping[str, Any]) -> str:
     if path != LIST_REPORTS_PATH:
         raise ValidationError("The requested endpoint is not supported.", 404, "ENDPOINT_NOT_FOUND")
 
-    if _has_values(request.get("query")):
-        raise ValidationError("Query parameters are not supported for eligible report retrieval.", 400, "UNSUPPORTED_QUERY")
+    query_map = _parse_query_map(request.get("query"))
+    _validate_allowed_query_keys(query_map, set(), "eligible report retrieval")
 
     if _has_values(request.get("form")) or _has_values(request.get("payload")):
         raise ValidationError("Request bodies are not supported for eligible report retrieval.", 400, "UNSUPPORTED_BODY")
@@ -111,8 +112,8 @@ def validate_recent_batches_request(request: Mapping[str, Any]) -> str:
     if path != RECENT_BATCHES_PATH:
         raise ValidationError("The requested endpoint is not supported.", 404, "ENDPOINT_NOT_FOUND")
 
-    if _has_values(request.get("query")):
-        raise ValidationError("Query parameters are not supported for recent batch retrieval.", 400, "UNSUPPORTED_QUERY")
+    query_map = _parse_query_map(request.get("query"))
+    _validate_allowed_query_keys(query_map, set(), "recent batch retrieval")
 
     if _has_values(request.get("form")) or _has_values(request.get("payload")):
         raise ValidationError("Request bodies are not supported for recent batch retrieval.", 400, "UNSUPPORTED_BODY")
@@ -145,9 +146,7 @@ def _extract_session_key(session: Any) -> str:
 
 def _extract_batch_id(query: Any) -> str:
     query_map = _parse_query_map(query)
-    unexpected_keys = sorted(set(query_map.keys()) - {"batch_id"})
-    if unexpected_keys:
-        raise ValidationError("Unexpected query parameters were supplied for batch status retrieval.", 400, "UNSUPPORTED_QUERY")
+    _validate_allowed_query_keys(query_map, {"batch_id"}, "batch status retrieval")
 
     batch_id_values = query_map.get("batch_id")
     if not batch_id_values:
@@ -162,6 +161,22 @@ def _extract_batch_id(query: Any) -> str:
 
     return batch_id
 
+
+def _validate_allowed_query_keys(query_map: Mapping[str, list[str]], allowed_keys: set[str], action_label: str) -> None:
+    unexpected_keys = sorted(set(query_map.keys()) - allowed_keys - {"_"})
+    if unexpected_keys:
+        raise ValidationError(f"Unexpected query parameters were supplied for {action_label}.", 400, "UNSUPPORTED_QUERY")
+
+    cache_buster_values = query_map.get("_")
+    if cache_buster_values is None:
+        return
+
+    if len(cache_buster_values) != 1:
+        raise ValidationError(f"The optional cache-buster parameter is invalid for {action_label}.", 400, "UNSUPPORTED_QUERY")
+
+    cache_buster = _as_string(cache_buster_values[0])
+    if not cache_buster or not _ALLOWED_CACHE_BUSTER_PATTERN.fullmatch(cache_buster):
+        raise ValidationError(f"The optional cache-buster parameter is invalid for {action_label}.", 400, "UNSUPPORTED_QUERY")
 
 def _parse_query_map(query: Any) -> dict[str, list[str]]:
     if query is None:
@@ -381,3 +396,5 @@ def _as_string(value: Any) -> str:
         return value.strip()
 
     return ""
+
+

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from sutw_clone_manager import execute_clone_preparation, get_clone_boundary_descriptors
+from sutw_config import get_execution_boundary_settings
 from sutw_kvstore import (
     create_batch_record,
     get_internal_batch_record,
@@ -13,6 +15,7 @@ from sutw_kvstore import (
     save_batch_record,
 )
 from sutw_report_inventory import list_eligible_reports
+from sutw_verification import get_verification_boundary_descriptors
 
 _NON_TERMINAL_POLL_INTERVAL_MS = 2000
 _LIFECYCLE_STAGES = [
@@ -63,16 +66,16 @@ _REPORT_STAGE_INDEX = {stage["key"]: index for index, stage in enumerate(_REPORT
 _EXECUTION_READINESS = {
     "tracking_mode": "tracked_batch",
     "storage_mode": "process_memory",
-    "execution_mode": "stub_non_destructive",
+    "execution_mode": "controlled_clone_preparation",
     "execution_enabled": False,
     "message": (
-        "Tracked status is available for operator review, but real execution remains disabled. "
-        "Batch data stays in temporary process memory only in this phase."
+        "Clone preparation is enabled as the first controlled real execution step. "
+        "Dispatch, verification, cleanup, and locks remain disabled in this phase."
     ),
 }
 _PHASE_CAPABILITIES = {
-    "execution_phase": "tracked_only",
-    "tracked_only": True,
+    "execution_phase": "clone_preparation_enabled",
+    "tracked_only": False,
     "capabilities": [
         {
             "key": "view_tracked_status",
@@ -82,6 +85,11 @@ _PHASE_CAPABILITIES = {
         {
             "key": "reopen_recent_batch",
             "label": "Reopen Recent Batch",
+            "enabled": True,
+        },
+        {
+            "key": "observe_clone_preparation",
+            "label": "Observe Clone Preparation",
             "enabled": True,
         },
         {
@@ -104,6 +112,10 @@ _TRANSITION_POLICY = {
         {
             "key": "reopen_recent_batch",
             "label": "Reopen Recent Batch",
+        },
+        {
+            "key": "observe_clone_preparation",
+            "label": "Observe Clone Preparation",
         },
     ],
     "disallowed_actions": [
@@ -141,6 +153,11 @@ _ACTION_INTENTS = {
             "key": "reopen_recent_batch",
             "label": "Reopen Recent Batch",
             "intent": "review",
+        },
+        {
+            "key": "observe_clone_preparation",
+            "label": "Observe Clone Preparation",
+            "intent": "observe",
         },
     ],
     "disabled_actions": [
@@ -341,19 +358,13 @@ def _build_batch_record(submission: dict[str, Any], selected_reports: list[dict[
         "selected_reports": selected_reports,
         "time_range": submission["time_range"],
     }
-
-    return {
+    batch_record = {
         "batch_id": batch_id,
         "mode": "tracked_stub",
         "lifecycle_state": initial_stage["key"],
         "lifecycle_label": initial_stage["label"],
         "state_message": initial_stage["state_message"],
-        "execution_readiness": dict(_EXECUTION_READINESS),
-        "phase_capabilities": _build_phase_capabilities(terminal=False),
-        "transition_policy": _build_transition_policy(terminal=False),
-        "action_intents": _build_action_intents(terminal=False),
-        "execution_plan": _build_execution_plan(selected_reports),
-        "execution_request_preview": _build_execution_request_preview(batch_id, submission_record),
+        "clone_preparation_result": None,
         "terminal": False,
         "recommended_poll_interval_ms": _NON_TERMINAL_POLL_INTERVAL_MS,
         "status_checks": 0,
@@ -370,10 +381,27 @@ def _build_batch_record(submission: dict[str, Any], selected_reports: list[dict[
         "report_statuses": report_statuses,
         "progress": _build_lifecycle_progress(report_statuses, 0),
     }
+    _apply_execution_metadata(
+        batch_record=batch_record,
+        selected_reports=selected_reports,
+        submission=submission_record,
+        terminal=False,
+        prepare_clone=False,
+    )
+    return batch_record
 
 
 def _advance_batch_record(batch_record: dict[str, Any]) -> dict[str, Any]:
     if batch_record.get("terminal"):
+        submission = batch_record.get("submission") or {}
+        selected_reports = submission.get("selected_reports") or []
+        _apply_execution_metadata(
+            batch_record=batch_record,
+            selected_reports=selected_reports,
+            submission=submission,
+            terminal=True,
+            prepare_clone=batch_record.get("lifecycle_state") != "accepted",
+        )
         return batch_record
 
     current_state = batch_record.get("lifecycle_state")
@@ -397,13 +425,12 @@ def _advance_batch_record(batch_record: dict[str, Any]) -> dict[str, Any]:
     batch_record["updated_at"] = timestamp
     batch_record["terminal"] = stage_index == len(_LIFECYCLE_STAGES) - 1
     batch_record["recommended_poll_interval_ms"] = 0 if batch_record["terminal"] else _NON_TERMINAL_POLL_INTERVAL_MS
-    batch_record["phase_capabilities"] = _build_phase_capabilities(batch_record["terminal"])
-    batch_record["transition_policy"] = _build_transition_policy(batch_record["terminal"])
-    batch_record["action_intents"] = _build_action_intents(batch_record["terminal"])
-    batch_record["execution_plan"] = _build_execution_plan(selected_reports)
-    batch_record["execution_request_preview"] = _build_execution_request_preview(
-        batch_record.get("batch_id", ""),
-        submission,
+    _apply_execution_metadata(
+        batch_record=batch_record,
+        selected_reports=selected_reports,
+        submission=submission,
+        terminal=batch_record["terminal"],
+        prepare_clone=stage_index >= 1,
     )
 
     if current_state != stage["key"]:
@@ -418,6 +445,49 @@ def _advance_batch_record(batch_record: dict[str, Any]) -> dict[str, Any]:
         batch_record["events"] = events
 
     return batch_record
+
+
+def _apply_execution_metadata(
+    batch_record: dict[str, Any],
+    selected_reports: list[dict[str, Any]],
+    submission: dict[str, Any],
+    terminal: bool,
+    prepare_clone: bool,
+) -> None:
+    clone_preparation_result = batch_record.get("clone_preparation_result")
+
+    if prepare_clone and not (clone_preparation_result and clone_preparation_result.get("executed")):
+        clone_preparation_result = execute_clone_preparation(
+            batch_id=batch_record.get("batch_id", ""),
+            selected_reports=selected_reports,
+            time_range=submission.get("time_range") or {},
+        )
+
+    batch_record["clone_preparation_result"] = clone_preparation_result
+    batch_record["execution_readiness"] = _build_execution_readiness(clone_preparation_result)
+    batch_record["phase_capabilities"] = _build_phase_capabilities(terminal)
+    batch_record["transition_policy"] = _build_transition_policy(terminal)
+    batch_record["action_intents"] = _build_action_intents(terminal)
+    batch_record["execution_plan"] = _build_execution_plan(selected_reports, clone_preparation_result)
+    batch_record["execution_request_preview"] = _build_execution_request_preview(
+        batch_record.get("batch_id", ""),
+        submission,
+    )
+    batch_record["execution_enablement"] = _build_execution_enablement(clone_preparation_result)
+    batch_record["execution_action_review"] = _build_execution_action_review(
+        batch_record["execution_readiness"],
+        batch_record["phase_capabilities"],
+        batch_record["transition_policy"],
+        batch_record["action_intents"],
+        batch_record["execution_plan"],
+        batch_record["execution_request_preview"],
+        batch_record["execution_enablement"],
+    )
+    batch_record["execution_phase_roadmap"] = _build_execution_phase_roadmap(
+        batch_record["phase_capabilities"],
+        batch_record["execution_action_review"],
+        batch_record["execution_enablement"],
+    )
 
 
 def _build_initial_report_statuses(selected_reports: list[dict[str, str]], timestamp: str) -> list[dict[str, Any]]:
@@ -505,13 +575,36 @@ def _build_lifecycle_progress(report_statuses: list[dict[str, Any]], current_sta
     }
 
 
+def _build_execution_readiness(clone_preparation_result: dict[str, Any] | None) -> dict[str, Any]:
+    execution_readiness = dict(_EXECUTION_READINESS)
+
+    if clone_preparation_result and clone_preparation_result.get("executed"):
+        execution_readiness["message"] = (
+            "Clone preparation executed safely and is now observable in tracked batch status. "
+            "Dispatch, verification, cleanup, and locks remain disabled."
+        )
+    else:
+        execution_readiness["message"] = (
+            "Clone preparation is enabled as the first controlled real execution step. "
+            "It will run automatically after safe validation completes, while downstream phases remain disabled."
+        )
+
+    return execution_readiness
+
+
 def _build_phase_capabilities(terminal: bool) -> dict[str, Any]:
     if terminal:
-        message = "This batch reached non-destructive stub completion and remains review-only until a later execution-backed phase."
+        message = (
+            "Clone preparation remains the only enabled execution boundary after stub completion. "
+            "Dispatch, verification, cleanup, and locks remain disabled."
+        )
         next_allowed_transition = "review_terminal_batch"
     else:
-        message = "This batch supports tracked review only. Real execution transitions remain disabled in this phase."
-        next_allowed_transition = "status_refresh"
+        message = (
+            "Clone preparation is enabled and observable in this phase. "
+            "Dispatch, verification, cleanup, and locks remain disabled."
+        )
+        next_allowed_transition = "dispatch_enablement_review"
 
     return {
         "execution_phase": _PHASE_CAPABILITIES["execution_phase"],
@@ -524,16 +617,16 @@ def _build_phase_capabilities(terminal: bool) -> dict[str, Any]:
 
 def _build_transition_policy(terminal: bool) -> dict[str, Any]:
     if terminal:
-        next_backend_phase = "execution_enablement_pending"
+        next_backend_phase = "dispatch_enablement_review"
         policy_message = (
-            "This batch is terminal for the current tracked-only phase. "
-            "Operator review remains allowed, but execution-backed actions stay disabled."
+            "Clone preparation may remain observable on this terminal tracked batch, "
+            "but dispatch, verification, cleanup, and locks stay disabled pending later review."
         )
     else:
-        next_backend_phase = "tracked_status_progression"
+        next_backend_phase = "dispatch_enablement_review"
         policy_message = (
-            "This batch may continue through tracked status refresh only. "
-            "Execution-backed transitions remain disabled until a later phase."
+            "Clone preparation is the only enabled real execution step in this phase. "
+            "Dispatch, verification, cleanup, and locks remain disabled until later enablement review."
         )
 
     return {
@@ -546,11 +639,23 @@ def _build_transition_policy(terminal: bool) -> dict[str, Any]:
 
 def _build_action_intents(terminal: bool) -> dict[str, Any]:
     if terminal:
-        enabled_reason = "Review-oriented actions remain available after stub completion so operators can inspect the terminal tracked batch safely."
-        disabled_reason = "Execution-backed actions remain server-side gated even after terminal stub completion."
+        enabled_reason = (
+            "Review-oriented actions and clone-preparation observation remain available after stub completion "
+            "so operators can inspect the tracked batch safely."
+        )
+        disabled_reason = (
+            "Dispatch, verification, cleanup, and full execution-backed actions remain server-side gated "
+            "even after terminal stub completion."
+        )
     else:
-        enabled_reason = "Read-only review and navigation actions are allowed while the tracked batch continues through safe lifecycle polling."
-        disabled_reason = "Execution-backed actions remain server-side gated until a later execution-enabled phase."
+        enabled_reason = (
+            "Read-only review, navigation, and clone-preparation observation are allowed while the tracked batch "
+            "continues through safe lifecycle polling."
+        )
+        disabled_reason = (
+            "Dispatch, verification, cleanup, and full execution-backed actions remain server-side gated "
+            "until a later execution-enabled phase."
+        )
 
     return {
         "enabled_actions": [dict(action) for action in _ACTION_INTENTS["enabled_actions"]],
@@ -559,14 +664,41 @@ def _build_action_intents(terminal: bool) -> dict[str, Any]:
             "enabled": enabled_reason,
             "disabled": disabled_reason,
         },
-        "message": "Action intents are descriptive only. Server-side gating keeps execution disabled in this phase.",
+        "message": (
+            "Action intents now include safe clone-preparation observation. "
+            "Dispatch, verification, cleanup, and full execution remain gated in this phase."
+        ),
     }
 
 
-def _build_execution_plan(selected_reports: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_execution_plan(
+    selected_reports: list[dict[str, Any]],
+    clone_preparation_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    clone_preparation_step = {
+        "key": "clone_preparation",
+        "label": "Clone Preparation",
+        "status": "enabled_waiting",
+        "message": (
+            "Clone preparation is enabled as the first controlled real execution step and will run "
+            "after safe validation completes."
+        ),
+    }
+
+    if clone_preparation_result and clone_preparation_result.get("executed"):
+        clone_preparation_step = {
+            "key": "clone_preparation",
+            "label": "Clone Preparation",
+            "status": "executed_safe",
+            "message": clone_preparation_result.get(
+                "message",
+                "Clone preparation executed safely with no clone job, SPL dispatch, or report modification created.",
+            ),
+        }
+
     return {
-        "plan_state": "preview_only",
-        "preview_only": True,
+        "plan_state": "controlled_clone_preparation",
+        "preview_only": False,
         "planned_reports": [
             {
                 "report_id": report.get("id", ""),
@@ -574,7 +706,8 @@ def _build_execution_plan(selected_reports: list[dict[str, Any]]) -> dict[str, A
             }
             for report in selected_reports
         ],
-        "planned_steps": [
+        "planned_steps": [clone_preparation_step]
+        + [
             {
                 "key": step["key"],
                 "label": step["label"],
@@ -582,10 +715,11 @@ def _build_execution_plan(selected_reports: list[dict[str, Any]]) -> dict[str, A
                 "message": step["message"],
             }
             for step in _EXECUTION_PLAN_STEPS
+            if step["key"] != "clone_preparation"
         ],
         "message": (
-            "This execution plan is a high-level preview only. "
-            "No clone, dispatch, verification, or cleanup action runs in this phase."
+            "Clone preparation is the only enabled real execution step in this phase. "
+            "Dispatch, verification, cleanup, and locks remain preview-only or disabled."
         ),
     }
 
@@ -611,6 +745,245 @@ def _build_execution_request_preview(batch_id: str, submission: dict[str, Any]) 
             "No clone, dispatch, verification, or cleanup action runs in this phase."
         ),
     }
+
+
+def _build_execution_enablement(clone_preparation_result: dict[str, Any] | None) -> dict[str, Any]:
+    settings = get_execution_boundary_settings()
+    boundary_descriptors = _get_internal_execution_boundaries(clone_preparation_result)
+    enabled_boundary = next(
+        (
+            {
+                "key": boundary["phase_key"],
+                "label": boundary["phase_label"],
+                "state": boundary["state"],
+            }
+            for boundary in boundary_descriptors
+            if boundary.get("state") == "enabled"
+        ),
+        {
+            "key": settings["enabled_boundary"]["key"],
+            "label": settings["enabled_boundary"]["label"],
+            "state": settings["enablement_state"],
+        },
+    )
+    blocked_boundaries = [
+        {
+            "key": boundary["phase_key"],
+            "label": boundary["phase_label"],
+            "state": boundary["state"],
+        }
+        for boundary in boundary_descriptors
+        if boundary.get("state") != "enabled"
+    ]
+
+    if clone_preparation_result and clone_preparation_result.get("executed"):
+        observation = {
+            "state": clone_preparation_result.get("execution_state", "prepared"),
+            "prepared_report_count": clone_preparation_result.get("prepared_report_count", 0),
+            "executed_at": clone_preparation_result.get("executed_at", ""),
+            "message": clone_preparation_result.get("message", ""),
+        }
+    else:
+        observation = {
+            "state": "waiting_for_validation",
+            "prepared_report_count": 0,
+            "executed_at": "",
+            "message": (
+                "Clone preparation is enabled and waiting for the batch to reach safe validation "
+                "before it executes."
+            ),
+        }
+
+    return {
+        "current_enablement_state": settings["enablement_state"],
+        "enabled_boundary": enabled_boundary,
+        "overall_preview_only": settings["preview_only"],
+        "overall_execution_enabled": settings["execution_enabled"],
+        "blocked_boundaries": blocked_boundaries,
+        "boundary_statuses": [
+            {
+                "boundary": boundary["phase_key"],
+                "label": boundary["phase_label"],
+                "state": boundary["state"],
+                "message": boundary["summary"],
+            }
+            for boundary in boundary_descriptors
+        ],
+        "clone_preparation_observation": observation,
+        "message": settings["message"],
+    }
+
+
+def _build_execution_action_review(
+    execution_readiness: dict[str, Any],
+    phase_capabilities: dict[str, Any],
+    transition_policy: dict[str, Any],
+    action_intents: dict[str, Any],
+    execution_plan: dict[str, Any],
+    execution_request_preview: dict[str, Any],
+    execution_enablement: dict[str, Any],
+) -> dict[str, Any]:
+    execution_enabled = bool(execution_readiness.get("execution_enabled"))
+    tracked_only = phase_capabilities.get("tracked_only") is True
+    preview_only = bool(execution_plan.get("preview_only")) or bool(execution_request_preview.get("preview_only"))
+    policy_blocks_start = any(
+        action.get("key") == "start_execution" for action in transition_policy.get("disallowed_actions") or []
+    )
+    intents_block_start = any(
+        action.get("key") == "start_execution" for action in action_intents.get("disabled_actions") or []
+    )
+    next_backend_step = transition_policy.get("next_backend_phase", "tracked_status_progression")
+    planned_steps = execution_plan.get("planned_steps") or []
+    request_shape = execution_request_preview.get("request_shape", "future_execution_submission")
+
+    execution_allowed = (
+        execution_enabled
+        and not tracked_only
+        and not preview_only
+        and not policy_blocks_start
+        and not intents_block_start
+    )
+
+    if execution_allowed:
+        review_state = "execution_allowed"
+        decision_reason = "Execution is allowed by the current batch review metadata."
+    else:
+        review_state = "execution_blocked"
+        decision_reason = (
+            "Execution remains blocked overall because only clone preparation is enabled in this phase, "
+            "while dispatch, verification, cleanup, and locks remain server-side gated."
+        )
+
+    return {
+        "review_state": review_state,
+        "execution_allowed": execution_allowed,
+        "preview_only": bool(execution_enablement.get("overall_preview_only")),
+        "decision_reason": decision_reason,
+        "next_backend_step": next_backend_step,
+        "decision_inputs": [
+            {
+                "source": "execution_readiness",
+                "summary": (
+                    "Overall execution remains disabled while execution mode is limited to controlled clone preparation."
+                    if not execution_enabled
+                    else "Execution enabled is Yes."
+                ),
+            },
+            {
+                "source": "phase_capabilities",
+                "summary": (
+                    "Execution phase is "
+                    f"{phase_capabilities.get('execution_phase', 'clone_preparation_enabled')} "
+                    "and the next allowed transition is "
+                    f"{phase_capabilities.get('next_allowed_transition', 'dispatch_enablement_review')}."
+                ),
+            },
+            {
+                "source": "transition_policy",
+                "summary": (
+                    "Start Execution remains listed as a disallowed action, and the next backend phase is "
+                    f"{next_backend_step}."
+                ),
+            },
+            {
+                "source": "action_intents",
+                "summary": "Execution-oriented intents beyond clone preparation remain disabled by server-side gating.",
+            },
+            {
+                "source": "execution_plan",
+                "summary": (
+                    f"The execution plan now includes {len(planned_steps)} high-level steps, with clone preparation "
+                    "enabled and later phases remaining preview-only."
+                ),
+            },
+            {
+                "source": "execution_request_preview",
+                "summary": (
+                    f"The backend-generated {request_shape} payload remains preflight-only for operator review."
+                ),
+            },
+            {
+                "source": "execution_enablement",
+                "summary": (
+                    "Clone Preparation is enabled as the only real execution boundary, while downstream "
+                    "boundaries remain blocked or under enablement review."
+                ),
+            },
+        ],
+        "message": (
+            "This execution-action review is backend-generated for controlled preflight review. "
+            "Clone preparation may execute safely, but dispatch, verification, cleanup, and locks remain disabled."
+        ),
+    }
+
+
+def _build_execution_phase_roadmap(
+    phase_capabilities: dict[str, Any],
+    execution_action_review: dict[str, Any],
+    execution_enablement: dict[str, Any],
+) -> dict[str, Any]:
+    settings = get_execution_boundary_settings()
+    current_phase = phase_capabilities.get("execution_phase", settings["current_phase"])
+    next_phase = settings["next_phase"]
+    enablement_milestone = settings["enablement_milestone"]
+    roadmap_boundary_steps = [
+        {
+            "phase": boundary["boundary"],
+            "label": boundary["label"],
+            "status": boundary["state"],
+            "message": boundary["message"],
+        }
+        for boundary in execution_enablement.get("boundary_statuses") or []
+        if boundary.get("boundary") != "clone_preparation"
+    ]
+    roadmap_steps = [
+        {
+            "phase": current_phase,
+            "label": "Clone Preparation Enabled",
+            "status": "current",
+            "message": (
+                execution_enablement.get("clone_preparation_observation", {}).get("message")
+                or "Clone preparation is enabled as the first controlled real execution step."
+            ),
+        },
+        {
+            "phase": next_phase,
+            "label": "Dispatch Enablement Review",
+            "status": "next",
+            "message": enablement_milestone["summary"],
+        },
+    ]
+    roadmap_steps.extend(roadmap_boundary_steps)
+
+    return {
+        "current_phase": current_phase,
+        "next_phase": next_phase,
+        "execution_blocked": not bool(execution_action_review.get("execution_allowed")),
+        "blocked_reason": execution_action_review.get(
+            "decision_reason",
+            "Execution remains blocked until a later backend-controlled enablement phase.",
+        ),
+        "enablement_milestone": {
+            "key": enablement_milestone["key"],
+            "label": enablement_milestone["label"],
+            "summary": enablement_milestone["summary"],
+        },
+        "preview_only": bool(settings["preview_only"]),
+        "roadmap_steps": roadmap_steps,
+        "message": (
+            "This execution-phase roadmap is backend-generated for planning only. "
+            "Clone preparation is enabled and observable, while dispatch, verification, cleanup, and locks remain disabled."
+        ),
+    }
+
+
+def _get_internal_execution_boundaries(
+    clone_preparation_result: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    return [
+        *get_clone_boundary_descriptors(clone_preparation_result),
+        *get_verification_boundary_descriptors(),
+    ]
 
 
 def _build_lifecycle_event(sequence: int, stage: dict[str, str], timestamp: str) -> dict[str, Any]:
